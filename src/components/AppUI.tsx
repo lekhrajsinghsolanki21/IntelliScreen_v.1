@@ -18,6 +18,7 @@ import {
   completeAnalysis 
 } from "@/src/store/appSlice";
 import { PieChart, Pie, Cell, ResponsiveContainer, Tooltip, Legend } from "recharts";
+import axios from "axios";
 
 // --- Navbar Component ---
 export function Navbar() {
@@ -217,105 +218,54 @@ export function ResumeScore() {
     }
   };
 
-  const handleAnalyze = () => {
+  const handleAnalyze = async () => {
     if (!jobTitle || !skillsRequired || resumeFiles.length === 0) return;
     dispatch(startAnalysis());
     setSelectedCandidateId(null);
 
+    // Initial progress simulation (smooth ramp up)
     let currentProgress = 0;
-    const interval = setInterval(() => {
-      currentProgress += 5;
-      dispatch(updateProgress(currentProgress));
-      
-      if (currentProgress >= 100) {
-        clearInterval(interval);
-        const mockResults = resumeFiles.map((file, index) => {
-          const ext = file.name.split('.').pop()?.toLowerCase();
-          const isImage = ['jpg', 'jpeg', 'png', 'gif', 'webp', 'svg'].includes(ext || '');
-          const isUnsupported = !['pdf', 'docx', 'txt'].includes(ext || '');
-          const isTooSmall = file.size < 1000; // Less than 1KB is suspicious for a resume
-          
-          // Mock detection: If it's an image, unsupported, too small, or has a suspicious name
-          const isInvalid = isImage || isUnsupported || isTooSmall || 
-                           file.name.toLowerCase().includes('image') || 
-                           file.name.toLowerCase().includes('photo') ||
-                           file.name.toLowerCase().includes('screenshot') ||
-                           file.name.toLowerCase().includes('wallpaper');
-
-          if (isInvalid) {
-            let errorMsg = "This document format or content does not appear to be a valid resume.";
-            if (isImage) errorMsg = "This file appears to be an image. Resumes must be in PDF, DOCX, or TXT format.";
-            if (isTooSmall) errorMsg = "This file is too small to be a valid resume. Please upload a complete document.";
-            
-            return {
-              id: `cand-${index}`,
-              name: file.name,
-              atsScore: 0,
-              detailedMatcher: [],
-              feedback: "",
-              enhancements: [],
-              recommendedCourses: [],
-              isInvalid: true,
-              errorMessage: errorMsg
-            };
-          }
-
-          return {
-            id: `cand-${index}`,
-            name: file.name.replace(/\.[^/.]+$/, ""),
-            atsScore: Math.floor(Math.random() * (95 - 65 + 1) + 65),
-            detailedMatcher: [
-              {
-                category: "Technical Skills",
-                matches: ["React.js", "TypeScript", "Tailwind CSS"],
-                missing: ["Docker", "Kubernetes"],
-                score: 85
-              },
-              {
-                category: "Soft Skills",
-                matches: ["Communication", "Teamwork", "Problem Solving"],
-                missing: ["Public Speaking"],
-                score: 90
-              },
-              {
-                category: "Experience",
-                matches: ["3+ Years Frontend", "Agile Methodology"],
-                missing: ["Lead Experience"],
-                score: 75
-              }
-            ],
-            feedback: "Strong technical background with excellent alignment in modern frontend stacks. Needs more exposure to devops tools to reach senior level.",
-            enhancements: [
-              "Add specific metrics to your projects",
-              "Include certifications for AWS or Docker",
-              "Highlight cross-functional collaboration"
-            ],
-            recommendedCourses: [
-              {
-                title: "Advanced TypeScript",
-                platform: "Frontend Masters",
-                duration: "12 Hours",
-                rating: "4.9/5"
-              },
-              {
-                title: "Docker & Kubernetes",
-                platform: "Udemy",
-                duration: "25 Hours",
-                rating: "4.7/5"
-              },
-              {
-                title: "System Design",
-                platform: "DesignGurus",
-                duration: "20 Hours",
-                rating: "4.8/5"
-              }
-            ]
-          };
-        });
-        dispatch(completeAnalysis(mockResults));
-        setSelectedCandidateId(mockResults[0].id);
+    const progressInterval = setInterval(() => {
+      currentProgress += 2;
+      if (currentProgress < 90) {
+        dispatch(updateProgress(currentProgress));
       }
     }, 100);
+
+    try {
+      const formData = new FormData();
+      resumeFiles.forEach(file => {
+        formData.append('resumes', file);
+      });
+
+      // API call to the new Express backend
+      const response = await axios.post('/api/upload', formData, {
+        headers: {
+          'Content-Type': 'multipart/form-data'
+        },
+        onUploadProgress: (progressEvent) => {
+          if (progressEvent.total) {
+            const percentCompleted = Math.round((progressEvent.loaded * 100) / progressEvent.total);
+            // Sync progress slightly behind 100% until complete
+            dispatch(updateProgress(Math.min(95, percentCompleted)));
+          }
+        }
+      });
+
+      clearInterval(progressInterval);
+      dispatch(updateProgress(100));
+      
+      const realResults = response.data.results;
+      dispatch(completeAnalysis(realResults));
+      if (realResults.length > 0) {
+        setSelectedCandidateId(realResults[0].id);
+      }
+    } catch (error) {
+      clearInterval(progressInterval);
+      console.error("Analysis failed:", error);
+      alert("Failed to connect to the backend server. Please ensures it's running on port 3000.");
+      dispatch(updateProgress(0));
+    }
   };
 
   const selectedCandidate = results.find(c => c.id === selectedCandidateId);
